@@ -2,7 +2,8 @@
 chcp 65001 >nul 2>&1
 setlocal enabledelayedexpansion
 
-:: ─── Метро СПб — Windows скрипт управления ───
+:: ─── Метро СПб — полностью автоматизированный скрипт (Windows) ───
+:: Сам проверяет и устанавливает все зависимости через MSYS2.
 
 set "REPO_URL=https://github.com/zhenya1488/metro.git"
 set "DEFAULT_BRANCH=dev"
@@ -14,7 +15,7 @@ if "%~1"=="switch" goto :switch
 if "%~1"=="build" goto :build
 if "%~1"=="run" goto :run
 if "%~1"=="start" goto :start
-if "%~1"=="deps" goto :deps
+if "%~1"=="deps" goto :ensure_deps
 if "%~1"=="clean" goto :clean
 if "%~1"=="status" goto :status
 if "%~1"=="help" goto :help
@@ -22,27 +23,61 @@ if "%~1"=="-h" goto :help
 echo [metro] Неизвестная команда: %~1
 goto :help
 
-:: ─── Установка зависимостей ───
-:deps
-echo [metro] Установка зависимостей для Windows...
-where choco >nul 2>&1 && (
-    choco install -y mingw openssl pkgconfiglite
-    echo [metro] Для GTK-версии установи MSYS2: https://www.msys2.org
-    echo [metro] В MSYS2: pacman -S mingw-w64-x86_64-gtk4 mingw-w64-x86_64-libadwaita
-) || (
+:: ═══════════════════════════════════════════════════════════
+:: Автоустановка зависимостей
+:: ═══════════════════════════════════════════════════════════
+
+:ensure_deps
+echo [metro] Проверка зависимостей...
+
+:: Git
+where git >nul 2>&1 || (
+    echo [metro] Git не найден. Устанавливаю...
     where winget >nul 2>&1 && (
-        winget install MSYS2.MSYS2
-        echo [metro] В MSYS2 MINGW64 выполни:
-        echo   pacman -S mingw-w64-x86_64-gcc mingw-w64-x86_64-gtk4 mingw-w64-x86_64-libadwaita mingw-w64-x86_64-openssl
+        winget install --id Git.Git -e --source winget --accept-package-agreements --accept-source-agreements
     ) || (
-        echo [metro] Установи MSYS2 вручную: https://www.msys2.org
-        echo [metro] Затем в MSYS2 MINGW64:
-        echo   pacman -S mingw-w64-x86_64-gcc mingw-w64-x86_64-gtk4 mingw-w64-x86_64-libadwaita mingw-w64-x86_64-openssl
+        echo [metro] Установи Git вручную: https://git-scm.com/download/win
+        exit /b 1
     )
 )
+
+:: MSYS2 (необходим для gcc, gtk4, libadwaita)
+set "MSYS2_DIR="
+if exist "C:\msys64\usr\bin\bash.exe" set "MSYS2_DIR=C:\msys64"
+if exist "C:\tools\msys64\usr\bin\bash.exe" set "MSYS2_DIR=C:\tools\msys64"
+if exist "%USERPROFILE%\msys64\usr\bin\bash.exe" set "MSYS2_DIR=%USERPROFILE%\msys64"
+
+if "!MSYS2_DIR!"=="" (
+    echo [metro] MSYS2 не найден. Устанавливаю...
+    where winget >nul 2>&1 && (
+        winget install --id MSYS2.MSYS2 -e --accept-package-agreements --accept-source-agreements
+        echo [metro] MSYS2 установлен. Перезапусти скрипт.
+        exit /b 0
+    ) || (
+        echo [metro] Установи MSYS2 вручную: https://www.msys2.org
+        exit /b 1
+    )
+)
+
+echo [metro] MSYS2 найден: !MSYS2_DIR!
+
+:: Установка пакетов через pacman в MSYS2 MINGW64
+set "BASH=!MSYS2_DIR!\usr\bin\bash.exe"
+set "PACMAN_PACKAGES=mingw-w64-x86_64-gcc mingw-w64-x86_64-make mingw-w64-x86_64-pkg-config mingw-w64-x86_64-openssl mingw-w64-x86_64-gtk4 mingw-w64-x86_64-libadwaita"
+
+echo [metro] Проверка и установка пакетов MSYS2...
+"!BASH!" --login -c "pacman -S --needed --noconfirm %PACMAN_PACKAGES%"
+
+if errorlevel 1 (
+    echo [metro] Ошибка установки пакетов MSYS2.
+    exit /b 1
+)
+
+echo [metro] Все зависимости установлены.
 goto :eof
 
-:: ─── Обновление ───
+:: ═══════════════════════════════════════════════════════════
+
 :update
 if not exist ".git" (
     echo [metro] Клонирование репозитория...
@@ -52,15 +87,14 @@ if not exist ".git" (
 ) else (
     for /f %%b in ('git branch --show-current') do set "BRANCH=%%b"
     echo [metro] Обновление ветки !BRANCH!...
-    git pull origin !BRANCH! --ff-only || git pull origin !BRANCH! --rebase
+    git pull origin !BRANCH! --ff-only 2>nul || git pull origin !BRANCH! --rebase
 )
 echo [metro] Репозиторий обновлён.
 goto :eof
 
-:: ─── Переключение ветки ───
 :switch
 if "%~2"=="" (
-    for /f %%b in ('git branch --show-current') do echo Текущая ветка: %%b
+    for /f %%b in ('git branch --show-current') do echo Текущая: %%b
     echo Использование: %~nx0 switch ^<main^|dev^>
     goto :eof
 )
@@ -71,101 +105,101 @@ git pull origin %~2 --ff-only 2>nul
 echo [metro] Ветка: %~2
 goto :eof
 
-:: ─── Сборка ───
 :build
 set "TARGET=%~2"
-if "%TARGET%"=="" set "TARGET=cli"
+if "%TARGET%"=="" set "TARGET=all"
 
-where gcc >nul 2>&1 || (
-    echo [metro] gcc не найден. Установи MinGW или MSYS2.
-    goto :eof
-)
+:: Автоустановка зависимостей
+call :ensure_deps
+
+:: Определяем MSYS2 MINGW64 окружение для сборки
+set "MSYS2_DIR="
+if exist "C:\msys64" set "MSYS2_DIR=C:\msys64"
+if exist "C:\tools\msys64" set "MSYS2_DIR=C:\tools\msys64"
+if exist "%USERPROFILE%\msys64" set "MSYS2_DIR=%USERPROFILE%\msys64"
+
+set "BASH=!MSYS2_DIR!\usr\bin\bash.exe"
+set "BUILDCMD=cd '%cd:\=/%' && export PATH=/mingw64/bin:$PATH"
 
 if "%TARGET%"=="cli" (
     echo [metro] Сборка CLI...
-    gcc -Wall -O2 -o metro-cli.exe metroapp/main.c metroapp/pathfinder.c -lssl -lcrypto
-    echo [metro] Готово: metro-cli.exe
+    "!BASH!" --login -c "!BUILDCMD! && make cli"
 ) else if "%TARGET%"=="gtk" (
-    echo [metro] Сборка GTK ^(требуется MSYS2 MINGW64^)...
-    make gtk
-    echo [metro] Готово: metro-gtk.exe
+    echo [metro] Сборка GTK...
+    "!BASH!" --login -c "!BUILDCMD! && make gtk"
 ) else if "%TARGET%"=="all" (
-    call :build cli
-    call :build gtk
+    echo [metro] Сборка CLI + GTK...
+    "!BASH!" --login -c "!BUILDCMD! && make all"
 ) else (
     echo [metro] Неизвестная цель: %TARGET% ^(cli^|gtk^|all^)
+    goto :eof
 )
+
+if errorlevel 1 (
+    echo [metro] Ошибка сборки.
+    exit /b 1
+)
+echo [metro] Сборка завершена.
 goto :eof
 
-:: ─── Запуск ───
 :run
 set "MODE=%~2"
-if "%MODE%"=="" set "MODE=cli"
+if "%MODE%"=="" set "MODE=gtk"
 
 if "%MODE%"=="cli" (
-    if not exist "metro-cli.exe" call :build cli
+    if not exist "metro-cli.exe" if not exist "metro-cli" call :build cli
     echo [metro] Запуск CLI...
-    metro-cli.exe
+    if exist "metro-cli.exe" (metro-cli.exe) else (metro-cli)
 ) else if "%MODE%"=="gtk" (
-    if not exist "metro-gtk.exe" call :build gtk
+    if not exist "metro-gtk.exe" if not exist "metro-gtk" call :build gtk
     echo [metro] Запуск GTK...
-    start "" metro-gtk.exe
+    if exist "metro-gtk.exe" (start "" metro-gtk.exe) else (start "" metro-gtk)
 ) else (
     echo [metro] Неизвестный режим: %MODE% ^(cli^|gtk^)
 )
 goto :eof
 
-:: ─── Полный цикл ───
 :start
 call :update
-call :build cli
-where pkg-config >nul 2>&1 && (
-    pkg-config --exists libadwaita-1 >nul 2>&1 && call :build gtk
-)
-if exist "metro-gtk.exe" (
-    start "" metro-gtk.exe
-) else if exist "metro-cli.exe" (
-    metro-cli.exe
-) else (
-    echo [metro] Сборка не удалась.
-)
+call :build all
+call :run gtk
 goto :eof
 
-:: ─── Очистка ───
 :clean
 echo [metro] Очистка...
-del /f metro-cli.exe metro-gtk.exe 2>nul
+del /f metro-cli.exe metro-gtk.exe metro-cli metro-gtk 2>nul
 echo [metro] Готово.
 goto :eof
 
-:: ─── Статус ───
 :status
-echo OS:     Windows
-for /f %%b in ('git branch --show-current 2^>nul') do echo Ветка:  %%b
-for /f "delims=" %%c in ('git log --oneline -1 2^>nul') do echo Коммит: %%c
-if exist "metro-cli.exe" (echo CLI:    собран) else (echo CLI:    не собран)
-if exist "metro-gtk.exe" (echo GTK:    собран) else (echo GTK:    не собран)
+echo OS:      Windows
+for /f %%b in ('git branch --show-current 2^>nul') do echo Ветка:   %%b
+for /f "delims=" %%c in ('git log --oneline -1 2^>nul') do echo Коммит:  %%c
+if exist "metro-cli.exe" (echo CLI:     собран) else if exist "metro-cli" (echo CLI:     собран) else (echo CLI:     не собран)
+if exist "metro-gtk.exe" (echo GTK:     собран) else if exist "metro-gtk" (echo GTK:     собран) else (echo GTK:     не собран)
+set "MSYS2_DIR="
+if exist "C:\msys64" set "MSYS2_DIR=C:\msys64"
+if exist "C:\tools\msys64" set "MSYS2_DIR=C:\tools\msys64"
+if "!MSYS2_DIR!"=="" (echo MSYS2:   не установлен) else (echo MSYS2:   !MSYS2_DIR!)
 goto :eof
 
-:: ─── Help ───
 :help
 echo.
-echo   Метро СПб — скрипт управления
+echo   Метро СПб — автоматизированный скрипт (Windows)
 echo.
 echo   Использование:
-echo     %~nx0                   Обновить + собрать + запустить
+echo     %~nx0                   Обновить + установить всё + собрать + запустить
 echo     %~nx0 update            Обновить из GitHub
 echo     %~nx0 switch ^<ветка^>    Переключить ветку (main/dev)
-echo     %~nx0 build [cli^|gtk]   Собрать проект
-echo     %~nx0 run [cli^|gtk]     Запустить приложение
+echo     %~nx0 build [cli^|gtk]   Собрать (автоустановка MSYS2 + пакетов)
+echo     %~nx0 run [cli^|gtk]     Запустить (автосборка если нужно)
 echo     %~nx0 deps              Установить зависимости
-echo     %~nx0 clean             Удалить собранные файлы
+echo     %~nx0 clean             Удалить бинарники
 echo     %~nx0 status            Показать состояние
 echo     %~nx0 help              Эта справка
 echo.
-echo   Примеры:
-echo     %~nx0                   полный цикл
-echo     %~nx0 switch main       переключиться на main
-echo     %~nx0 build cli         собрать CLI-версию
-echo     %~nx0 run cli           запустить консольную версию
+echo   Зависимости (устанавливаются автоматически):
+echo     Git          — через winget
+echo     MSYS2        — через winget
+echo     gcc, gtk4, libadwaita, openssl — через MSYS2 pacman
 goto :eof
