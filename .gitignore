@@ -1,0 +1,5 @@
+build
+metroapp/Makefile
+.vscode
+metro-cli
+metro-gtk

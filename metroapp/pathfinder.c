@@ -3,29 +3,6 @@
 #include <openssl/crypto.h>
 #include "pathfinder.h"
 
-#define STATIONSCOUNT 75
-#define LINESCOUNT 6
-
-typedef struct {
-	unsigned char to;
-	unsigned char time; // в минутах
-	unsigned char transfer; // 1 - пересадка, 0 - нет
-} Edge;
-
-typedef struct {
-	unsigned char id;
-	char name[64];
-	unsigned char line_id; // id линии метро (из lines.dat)
-	unsigned char neighbors_count; // сколько соседей имеем
-	Edge** neighbors_edges; // массив указателей на соседей
-} Station;
-
-typedef struct {
-	unsigned char id;
-	char name[64];
-	char color[8];
-} Line;
-
 typedef struct {
 	int* stations;
 	int* dist;
@@ -216,7 +193,7 @@ int get_lines(char* filename, char* signame) {
 		char name[64] = { 0 };
 		char color[8] = { 0 };
 
-		sscanf(line, "%hhu;%[^;];%[^\n]", &id, name, color);
+		sscanf(line, "%hhu;%[^;];%[^\r\n]", &id, name, color);
 
 		lines[i].id = id;
 		strncpy(lines[i].name, name, sizeof(name));
@@ -448,4 +425,12 @@ void freePath(Path* path) {
 		free(path->stations);
 		free(path);
 	}
+}
+
+const Station* getStations() {
+	return stations;
+}
+
+const Line* getLines() {
+	return lines;
 }
